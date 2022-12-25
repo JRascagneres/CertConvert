@@ -2,7 +2,6 @@ package convert
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -11,41 +10,34 @@ import (
 	"software.sslmate.com/src/go-pkcs12"
 )
 
-func ConvertToPfx(certRaw, chainRaw, keyRaw []byte) ([]byte, error) {
+func ConvertToPfx(certRaw, chainRaw, keyRaw []byte, password string) ([]byte, error) {
+	// Read in certificate bytes block and parse it in as a x509 certificate
 	certData, _ := pem.Decode(certRaw)
-
 	cert, err := x509.ParseCertificate(certData.Bytes)
 	if err != nil {
 		return nil, err
 	}
 
+	// Load in key bytes as a private key type
 	key, err := loadPrivateKey(keyRaw)
 	if err != nil {
 		return nil, err
 	}
 
-	caCertsData, err := readCACerts(chainRaw)
+	// Read in all the certificate blocks in the chain
+	caCerts, err := readCACerts(chainRaw)
 	if err != nil {
 		return nil, err
 	}
 
-	var caCerts []*x509.Certificate
-	for _, caCertData := range caCertsData {
-		var caCert *x509.Certificate
-		caCert, err = x509.ParseCertificate(caCertData)
-		if err != nil {
-			return nil, err
-		}
-		caCerts = append(caCerts, caCert)
-	}
-
-	pfxBytes, err := pkcs12.Encode(rand.Reader, key, cert, caCerts, pkcs12.DefaultPassword)
+	// Convert key, cert and chain to a pfx type
+	pfxBytes, err := pkcs12.Encode(rand.Reader, key, cert, caCerts, password)
 	if err != nil {
 		return nil, err
 	}
 
 	// Decode again to validate that its worked
-	_, _, _, err = pkcs12.DecodeChain(pfxBytes, pkcs12.DefaultPassword)
+	_, _, _, err = pkcs12.DecodeChain(pfxBytes, password)
 	if err != nil {
 		return nil, err
 	}
@@ -53,10 +45,10 @@ func ConvertToPfx(certRaw, chainRaw, keyRaw []byte) ([]byte, error) {
 	return pfxBytes, nil
 }
 
-func readCACerts(data []byte) ([][]byte, error) {
+func readCACerts(data []byte) ([]*x509.Certificate, error) {
 	var rawData = data
 
-	var caCerts = make([][]byte, 0)
+	var caCerts = make([]*x509.Certificate, 0)
 	for {
 		block, rest := pem.Decode(rawData)
 		if block == nil {
@@ -64,7 +56,11 @@ func readCACerts(data []byte) ([][]byte, error) {
 		}
 
 		if block.Type == "CERTIFICATE" {
-			caCerts = append(caCerts, block.Bytes)
+			caCert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, err
+			}
+			caCerts = append(caCerts, caCert)
 		} else {
 			return nil, fmt.Errorf("unexpected type")
 		}
@@ -85,19 +81,15 @@ func loadPrivateKey(data []byte) (crypto.PrivateKey, error) {
 }
 
 func parsePrivateKey(data []byte) (crypto.PrivateKey, error) {
-	if key, err := x509.ParsePKCS1PrivateKey(data); err == nil {
+	parsedKey, err := x509.ParsePKCS8PrivateKey(data)
+	if err != nil {
+		return nil, err
+	}
+
+	switch key := parsedKey.(type) {
+	case *rsa.PrivateKey:
 		return key, nil
+	default:
+		return nil, fmt.Errorf("unexpected private key type")
 	}
-
-	if key, err := x509.ParsePKCS8PrivateKey(data); err == nil {
-		switch key := key.(type) {
-		case *rsa.PrivateKey, *ecdsa.PrivateKey:
-			return key, nil
-
-		default:
-			return nil, fmt.Errorf("error 1")
-		}
-	}
-
-	return nil, fmt.Errorf("error")
 }

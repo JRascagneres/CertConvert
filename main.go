@@ -4,6 +4,7 @@ import (
 	"CertConversion/convert"
 	"io/ioutil"
 	"os"
+	"software.sslmate.com/src/go-pkcs12"
 )
 
 func main() {
@@ -15,7 +16,7 @@ func main() {
 	}
 
 	// Convert cert, key and chain to a pfx file
-	pfxBytes, err := convert.ConvertToPfx(certRaw, chainRaw, keyRaw)
+	pfxBytes, err := convert.ConvertToPfx(certRaw, chainRaw, keyRaw, pkcs12.DefaultPassword)
 	if err != nil {
 		panic(err)
 	}
