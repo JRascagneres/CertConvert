@@ -16,7 +16,7 @@ func main() {
 	}
 
 	// Convert cert, key and chain to a pfx file
-	pfxBytes, err := convert.ConvertToPfx(certRaw, chainRaw, keyRaw, pkcs12.DefaultPassword)
+	pfxBytes, err := convert.PemToPfx(certRaw, chainRaw, keyRaw, pkcs12.DefaultPassword)
 	if err != nil {
 		panic(err)
 	}

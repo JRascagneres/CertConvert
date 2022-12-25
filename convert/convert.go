@@ -10,16 +10,15 @@ import (
 	"software.sslmate.com/src/go-pkcs12"
 )
 
-func ConvertToPfx(certRaw, chainRaw, keyRaw []byte, password string) ([]byte, error) {
-	// Read in certificate bytes block and parse it in as a x509 certificate
-	certData, _ := pem.Decode(certRaw)
-	cert, err := x509.ParseCertificate(certData.Bytes)
+func PemToPfx(certRaw, chainRaw, keyRaw []byte, password string) ([]byte, error) {
+	// Load in key bytes as a private key type
+	key, err := loadPrivateKey(keyRaw)
 	if err != nil {
 		return nil, err
 	}
 
-	// Load in key bytes as a private key type
-	key, err := loadPrivateKey(keyRaw)
+	// Load in cert bytes as a certificate type
+	cert, err := loadCert(certRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -45,12 +44,13 @@ func ConvertToPfx(certRaw, chainRaw, keyRaw []byte, password string) ([]byte, er
 	return pfxBytes, nil
 }
 
+// readCACerts reads the raw data from the chain file. We iterate through each block in the chain file and parse them
+// adding them to a slice for return.
+// We return errors in two cases, if the parsing of the certificate fails, or if the block type is incorrect.
 func readCACerts(data []byte) ([]*x509.Certificate, error) {
-	var rawData = data
-
 	var caCerts = make([]*x509.Certificate, 0)
 	for {
-		block, rest := pem.Decode(rawData)
+		block, rest := pem.Decode(data)
 		if block == nil {
 			break
 		}
@@ -65,21 +65,58 @@ func readCACerts(data []byte) ([]*x509.Certificate, error) {
 			return nil, fmt.Errorf("unexpected type")
 		}
 
-		rawData = rest
+		data = rest
 	}
 
 	return caCerts, nil
 }
 
+// loadCert reads in the raw data from the cert file. This reads in the single expected block and parses it as a
+// certificate.
+// We return errors in a number of cases, if data is nil, if there is more than a single block of data or if the data is
+// not a certificate type.
+func loadCert(data []byte) (*x509.Certificate, error) {
+	blockBytes, err := readBlock(data, "CERTIFICATE")
+	if err != nil {
+		return nil, err
+	}
+
+	return x509.ParseCertificate(blockBytes)
+}
+
+// loadPrivateKey reads in the raw data from the key file. This reads in the single expected block and parses it as a
+// private key.
+// We return errors in a number of cases, if data is nil, if there is more than a single block of data or if the data is
+// not a private key type.
 func loadPrivateKey(data []byte) (crypto.PrivateKey, error) {
-	block, _ := pem.Decode(data)
+	blockBytes, err := readBlock(data, "PRIVATE KEY")
+	if err != nil {
+		return nil, err
+	}
+
+	return parsePrivateKey(blockBytes)
+}
+
+// readBlock reads in a file where a single block is expected and verifies its type, returning its bytes.
+func readBlock(data []byte, expectedBlockType string) ([]byte, error) {
+	block, rest := pem.Decode(data)
 	if block == nil {
 		return nil, fmt.Errorf("no data")
 	}
 
-	return parsePrivateKey(block.Bytes)
+	if len(rest) != 0 {
+		return nil, fmt.Errorf("unexpected cert data remaining")
+	}
+
+	if block.Type != expectedBlockType {
+		return nil, fmt.Errorf("unexpected block type")
+	}
+
+	return block.Bytes, nil
 }
 
+// parsePrivateKey reads in a raw private key block and parses it as a private key type.
+// We return errors if the private key parse fails or if the key type is unexpected.
 func parsePrivateKey(data []byte) (crypto.PrivateKey, error) {
 	parsedKey, err := x509.ParsePKCS8PrivateKey(data)
 	if err != nil {
